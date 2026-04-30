@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMA Backtester — Multi-Timeframe</title>
+  <meta name="description" content="Backtest a Simple Moving Average crossover strategy (Long + Short) on BTC/USDT 15-minute candles before deploying to Hyperliquid." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+  <!-- ═══ HEADER ═══ -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">SMA<span class="logo-accent">Bot</span></span>
+      </div>
+      <div id="header-badge" class="header-badge">BTC/USDT · 15m · Long + Short</div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button id="tab-backtest" class="tab tab--active" role="tab" aria-selected="true" onclick="switchTab('backtest')">
+        <span class="tab-icon">📊</span> Backtester
+      </button>
+      <button id="tab-bot" class="tab" role="tab" aria-selected="false" onclick="switchTab('bot')">
+        <span class="tab-icon">🤖</span> Live Bot
+      </button>
+    </nav>
+    <div class="header-right">
+      <div id="live-price" class="live-price">
+        <span class="live-dot"></span>
+        <span id="price-value">Loading…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ BACKTESTER TAB ═══ -->
+  <div id="panel-backtest" class="panel panel--active">
+    <div class="layout">
+
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-section">
+          <h3 class="sidebar-title">Configuration</h3>
+
+          <label class="field" for="sym-select">Symbol</label>
+          <select id="sym-select" class="input">
+            <option value="BTCUSDT">BTC/USDT</option>
+            <option value="ETHUSDT">ETH/USDT</option>
+            <option value="SOLUSDT">SOL/USDT</option>
+          </select>
+
+          <label class="field" for="tf-select">Timeframe</label>
+          <select id="tf-select" class="input">
+            <option value="1m">1 Minute</option>
+            <option value="3m">3 Minutes</option>
+            <option value="5m">5 Minutes</option>
+            <option value="15m" selected>15 Minutes</option>
+            <option value="30m">30 Minutes</option>
+            <option value="1h">1 Hour</option>
+            <option value="2h">2 Hours</option>
+            <option value="4h">4 Hours</option>
+            <option value="1d">1 Day</option>
+          </select>
+
+          <label class="field" for="ma-type">MA Type</label>
+          <select id="ma-type" class="input">
+            <option value="EMA">EMA (Exponential)</option>
+            <option value="SMA">SMA (Simple)</option>
+          </select>
+
+          <label class="field" for="fast-period">Fast MA Period</label>
+          <input id="fast-period" class="input" type="number" value="9" min="2" max="200" />
+
+          <label class="field" for="slow-period">Slow MA Period</label>
+          <input id="slow-period" class="input" type="number" value="50" min="3" max="500" />
+
+          <label class="field" for="capital">Initial Capital (USD)</label>
+          <input id="capital" class="input" type="number" value="10000" min="100" />
+
+          <label class="field" for="leverage">Leverage (×)</label>
+          <input id="leverage" class="input" type="number" value="3" min="1" max="50" step="1" />
+
+          <label class="field" for="lookback">Lookback (days)</label>
+          <input id="lookback" class="input" type="number" value="90" min="7" max="365" />
+
+          <label class="field" for="fee-pct">Fee per Trade (%)</label>
+          <input id="fee-pct" class="input" type="number" value="0.05" step="0.01" min="0" max="1" />
+        </div>
+
+        <!-- Direction -->
+        <div class="sidebar-section filter-section">
+          <div class="filter-header">
+            <h3 class="sidebar-title">Trade Direction</h3>
+          </div>
+          <div class="direction-btns">
+            <button id="dir-both" class="dir-btn dir-btn--active" onclick="setDirection('both')">Long + Short</button>
+            <button id="dir-long" class="dir-btn" onclick="setDirection('long')">Long Only</button>
+          </div>
+          <input type="hidden" id="direction" value="both" />
+        </div>
+
+        <!-- RSI Filter -->
+        <div class="sidebar-section filter-section">
+          <div class="filter-header">
+            <h3 class="sidebar-title">RSI Filter</h3>
+            <label class="toggle-switch" for="rsi-enabled">
+              <input type="checkbox" id="rsi-enabled" checked onchange="toggleFilter('rsi')" />
+              <span class="toggle-knob"></span>
+            </label>
+          </div>
+          <div id="rsi-options" class="filter-options">
+            <label class="field" for="rsi-period">RSI Period</label>
+            <input id="rsi-period" class="input" type="number" value="14" min="2" max="50" />
+            <label class="field" for="rsi-ob">Overbought (skip longs above)</label>
+            <input id="rsi-ob" class="input" type="number" value="65" min="50" max="90" />
+            <label class="field" for="rsi-os">Oversold (skip shorts below)</label>
+            <input id="rsi-os" class="input" type="number" value="35" min="10" max="50" />
+          </div>
+        </div>
+
+        <!-- ATR Stop-Loss -->
+        <div class="sidebar-section filter-section">
+          <div class="filter-header">
+            <h3 class="sidebar-title">ATR Stop-Loss</h3>
+            <label class="toggle-switch" for="atr-enabled">
+              <input type="checkbox" id="atr-enabled" checked onchange="toggleFilter('atr')" />
+              <span class="toggle-knob"></span>
+            </label>
+          </div>
+          <div id="atr-options" class="filter-options">
+            <label class="field" for="atr-period">ATR Period</label>
+            <input id="atr-period" class="input" type="number" value="14" min="2" max="50" />
+            <label class="field" for="atr-mult">Stop Multiplier (×ATR)</label>
+            <input id="atr-mult" class="input" type="number" value="1.5" min="0.5" max="5" step="0.1" />
+          </div>
+        </div>
+
+        <!-- Trend Filter -->
+        <div class="sidebar-section filter-section">
+          <div class="filter-header">
+            <h3 class="sidebar-title">Trend Filter</h3>
+            <label class="toggle-switch" for="trend-enabled">
+              <input type="checkbox" id="trend-enabled" checked onchange="toggleFilter('trend')" />
+              <span class="toggle-knob"></span>
+            </label>
+          </div>
+          <div id="trend-options" class="filter-options">
+            <label class="field" for="trend-period">Trend MA Period</label>
+            <input id="trend-period" class="input" type="number" value="200" min="50" max="500" />
+          </div>
+        </div>
+
+        <!-- Volume Filter -->
+        <div class="sidebar-section filter-section">
+          <div class="filter-header">
+            <h3 class="sidebar-title">Volume Filter</h3>
+            <label class="toggle-switch" for="vol-enabled">
+              <input type="checkbox" id="vol-enabled" checked onchange="toggleFilter('vol')" />
+              <span class="toggle-knob"></span>
+            </label>
+          </div>
+          <div id="vol-options" class="filter-options">
+            <label class="field" for="vol-period">Volume SMA Period</label>
+            <input id="vol-period" class="input" type="number" value="20" min="5" max="100" />
+          </div>
+        </div>
+
+        <!-- Trailing Stop -->
+        <div class="sidebar-section filter-section">
+          <div class="filter-header">
+            <h3 class="sidebar-title">Trailing Stop</h3>
+            <label class="toggle-switch" for="ts-enabled">
+              <input type="checkbox" id="ts-enabled" checked onchange="toggleFilter('ts')" />
+              <span class="toggle-knob"></span>
+            </label>
+          </div>
+          <div id="ts-options" class="filter-options">
+            <label class="field" for="ts-mult">Trailing Distance (×ATR)</label>
+            <input id="ts-mult" class="input" type="number" value="3.0" min="0.5" max="10" step="0.1" />
+          </div>
+        </div>
+
+        <button id="run-btn" class="run-btn" onclick="handleRun()">
+          <span id="run-btn-text">▶ Run Backtest</span>
+        </button>
+
+        <div id="progress-box" class="progress-box hidden">
+          <div class="progress-spinner"></div>
+          <span id="progress-text">Initializing…</span>
+        </div>
+
+        <div id="error-box" class="error-box hidden">
+          <span id="error-text"></span>
+        </div>
+
+        <!-- Quick summary after run -->
+        <div id="quick-summary" class="quick-summary hidden">
+          <div class="qs-row">
+            <span class="qs-label">Total Trades</span>
+            <span id="qs-trades" class="qs-value">—</span>
+          </div>
+          <div class="qs-row">
+            <span class="qs-label">Win Rate</span>
+            <span id="qs-winrate" class="qs-value">—</span>
+          </div>
+          <div class="qs-row">
+            <span class="qs-label">Net Return</span>
+            <span id="qs-return" class="qs-value">—</span>
+          </div>
+          <div class="qs-row">
+            <span class="qs-label">Final Capital</span>
+            <span id="qs-capital" class="qs-value">—</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main content -->
+      <main class="main-content">
+
+        <!-- Chart -->
+        <section class="card chart-card" id="price-card">
+          <div class="card-header">
+            <span class="card-title">Price Chart + MA Signals</span>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div class="legend">
+                <span class="legend-item"><span class="legend-dot" style="background:#00d4aa"></span>Fast MA</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#f7931a"></span>Slow MA</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#3d8ef8"></span>Long Entry</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#ff4757"></span>Short Entry</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#f39c12"></span>ATR Stop</span>
+                <span class="legend-item"><span class="legend-dot" style="background:#32ff7e"></span>Trail Stop</span>
+              </div>
+              <button class="expand-btn" id="expand-price" onclick="toggleChart('price')" title="Expand chart">⤢</button>
+            </div>
+          </div>
+          <div id="chart-container" class="chart-container">
+            <div id="chart-placeholder" class="chart-placeholder">
+              <div class="placeholder-icon">📈</div>
+              <p>Configure parameters and click <strong>Run Backtest</strong></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Equity Curve -->
+        <section class="card equity-card hidden" id="equity-card">
+          <div class="card-header">
+            <span class="card-title">Equity Curve</span>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span id="equity-label" class="equity-label"></span>
+              <button class="expand-btn" id="expand-equity" onclick="toggleChart('equity')" title="Expand chart">⤢</button>
+            </div>
+          </div>
+          <div id="equity-container" class="chart-container chart-container--sm"></div>
+        </section>
+
+        <!-- Metrics -->
+        <section id="metrics-section" class="metrics-grid hidden">
+          <div class="metric-card" id="mc-winrate">
+            <div class="metric-label">Win Rate</div>
+            <div class="metric-value" id="m-winrate">—</div>
+            <div class="metric-sub" id="m-wins">— W / — L</div>
+          </div>
+          <div class="metric-card" id="mc-return">
+            <div class="metric-label">Total Return</div>
+            <div class="metric-value" id="m-return">—</div>
+            <div class="metric-sub" id="m-pnl">Net P&L</div>
+          </div>
+          <div class="metric-card" id="mc-drawdown">
+            <div class="metric-label">Max Drawdown</div>
+            <div class="metric-value" id="m-drawdown">—</div>
+            <div class="metric-sub">Peak-to-trough</div>
+          </div>
+          <div class="metric-card" id="mc-trades">
+            <div class="metric-label">Total Trades</div>
+            <div class="metric-value" id="m-trades">—</div>
+            <div class="metric-sub" id="m-period">— period</div>
+          </div>
+          <div class="metric-card" id="mc-sharpe">
+            <div class="metric-label">Sharpe Ratio</div>
+            <div class="metric-value" id="m-sharpe">—</div>
+            <div class="metric-sub">Annualized</div>
+          </div>
+          <div class="metric-card" id="mc-pf">
+            <div class="metric-label">Profit Factor</div>
+            <div class="metric-value" id="m-pf">—</div>
+            <div class="metric-sub" id="m-pf-sub">Gross P / Gross L</div>
+          </div>
+        </section>
+
+        <!-- Trade Log -->
+        <section class="card trade-log hidden" id="trade-log-section">
+          <div class="card-header">
+            <span class="card-title">Trade Log</span>
+            <span id="trade-count-badge" class="badge">0 trades</span>
+          </div>
+          <div class="table-wrapper">
+            <table id="trade-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Side</th>
+                  <th>Entry Time</th>
+                  <th>Entry Price</th>
+                  <th>Exit Time</th>
+                  <th>Exit Price</th>
+                  <th>Duration</th>
+                  <th>P&L (USD)</th>
+                  <th>P&L (%)</th>
+                </tr>
+              </thead>
+              <tbody id="trade-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ═══ LIVE BOT TAB ═══ -->
+  <div id="panel-bot" class="panel">
+    <div class="bot-layout">
+      <div class="bot-header-strip">
+        <div>
+          <h2 class="bot-title">🤖 Hyperliquid Live Bot <span class="badge badge--orange">Skeleton</span></h2>
+          <p class="bot-subtitle">A ready-to-customize Node.js bot that uses the same SMA crossover strategy. Fill in your private key and deploy.</p>
+        </div>
+        <button class="download-btn" onclick="downloadBot()">⬇ Download bot.js</button>
+      </div>
+
+      <div class="bot-steps">
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <strong>Install dependencies</strong>
+            <code class="inline-code">npm install ethers axios</code>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <strong>Set environment variable</strong>
+            <code class="inline-code">set HL_PRIVATE_KEY=0xYourPrivateKeyHere</code>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <strong>Run the bot</strong>
+            <code class="inline-code">node bot.js</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="code-viewer-card">
+        <div class="code-viewer-header">
+          <span>bot.js</span>
+          <button class="copy-btn" onclick="copyBot()">📋 Copy</button>
+        </div>
+        <pre id="bot-code-block" class="code-block"></pre>
+      </div>
+
+      <div class="warning-banner">
+        ⚠️ <strong>Risk Warning:</strong> Live trading involves real financial risk. Always test with small position sizes first. Never share or commit your private key. This skeleton is provided for educational purposes only.
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
