@@ -32,9 +32,13 @@ const CONFIG = {
 };
 
 // ─── EXCHANGE SETUP ──────────────────────────────────────────
+const WALLET = process.env.HL_WALLET_ADDRESS;
+
 const exchange = new ccxt.hyperliquid({
-  walletAddress: process.env.HL_WALLET_ADDRESS,
-  privateKey:    process.env.HL_PRIVATE_KEY,
+  apiKey:          WALLET,
+  secret:          process.env.HL_PRIVATE_KEY,
+  walletAddress:   WALLET,
+  privateKey:      process.env.HL_PRIVATE_KEY,
   enableRateLimit: true,
 });
 
@@ -142,7 +146,7 @@ async function runBot() {
 
   // Check balance
   try {
-    const balance = await exchange.fetchBalance();
+    const balance = await exchange.fetchBalance({ user: WALLET });
     const usdc = balance.total?.USDC || balance.free?.USDC || 0;
     console.log(`✅ Balance: $${parseFloat(usdc).toFixed(2)} USDC`);
   } catch (e) {
@@ -151,7 +155,7 @@ async function runBot() {
 
   // Check for existing position on startup
   try {
-    const positions = await exchange.fetchPositions([CONFIG.symbol]);
+    const positions = await exchange.fetchPositions([CONFIG.symbol], { user: WALLET });
     const pos = positions.find(p =>
       p.symbol === CONFIG.symbol && Math.abs(p.contracts) > 0
     );
@@ -307,7 +311,7 @@ async function tick() {
 // ─── ORDER EXECUTION ─────────────────────────────────────────
 async function openPosition(side, price) {
   try {
-    const balance = await exchange.fetchBalance();
+    const balance = await exchange.fetchBalance({ user: WALLET });
     const free = parseFloat(balance.free?.USDC || balance.total?.USDC || 0);
     const riskAmount = free * CONFIG.riskPct;
     const size = (riskAmount * CONFIG.leverage) / price;
