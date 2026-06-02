@@ -46,6 +46,9 @@ if (CONFIG.testnet) {
   exchange.setSandboxMode(true);
 }
 
+// Explicitly set wallet address on exchange object
+exchange.walletAddress = WALLET;
+
 // ─── INDICATOR FUNCTIONS ─────────────────────────────────────
 function calcEMA(closes, period) {
   const out = new Array(closes.length).fill(null);
@@ -155,7 +158,7 @@ async function runBot() {
 
   // Check for existing position on startup
   try {
-    const positions = await exchange.fetchPositions([CONFIG.symbol], { user: WALLET });
+    const positions = await exchange.fetchPositions([CONFIG.symbol]);
     const pos = positions.find(p =>
       p.symbol === CONFIG.symbol && Math.abs(p.contracts) > 0
     );
@@ -311,7 +314,7 @@ async function tick() {
 // ─── ORDER EXECUTION ─────────────────────────────────────────
 async function openPosition(side, price) {
   try {
-    const balance = await exchange.fetchBalance({ user: WALLET });
+    const balance = await exchange.fetchBalance();
     const free = parseFloat(balance.free?.USDC || balance.total?.USDC || 0);
     const riskAmount = free * CONFIG.riskPct;
     const size = (riskAmount * CONFIG.leverage) / price;
