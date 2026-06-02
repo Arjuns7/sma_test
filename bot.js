@@ -32,22 +32,27 @@ const CONFIG = {
 };
 
 // ─── EXCHANGE SETUP ──────────────────────────────────────────
-const WALLET = process.env.HL_WALLET_ADDRESS;
+const WALLET = (process.env.HL_WALLET_ADDRESS || '').trim();
+const PRIVKEY = (process.env.HL_PRIVATE_KEY || '').trim();
+
+console.log(`🔑 Wallet: ${WALLET.slice(0, 6)}...${WALLET.slice(-4)}`);
+console.log(`🔑 Key:    ${PRIVKEY.slice(0, 6)}...${PRIVKEY.slice(-4)}`);
 
 const exchange = new ccxt.hyperliquid({
-  apiKey:          WALLET,
-  secret:          process.env.HL_PRIVATE_KEY,
   walletAddress:   WALLET,
-  privateKey:      process.env.HL_PRIVATE_KEY,
+  privateKey:      PRIVKEY,
   enableRateLimit: true,
+  sandbox:         CONFIG.testnet,
 });
 
-if (CONFIG.testnet) {
-  exchange.setSandboxMode(true);
-}
-
-// Explicitly set wallet address on exchange object
+// Belt-and-suspenders: set on every possible property
 exchange.walletAddress = WALLET;
+exchange.apiKey = WALLET;
+exchange.secret = PRIVKEY;
+exchange.privateKey = PRIVKEY;
+if (!exchange.options) exchange.options = {};
+exchange.options['walletAddress'] = WALLET;
+exchange.options['defaultAddress'] = WALLET;
 
 // ─── INDICATOR FUNCTIONS ─────────────────────────────────────
 function calcEMA(closes, period) {
