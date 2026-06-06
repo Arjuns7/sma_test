@@ -14,7 +14,7 @@ const CONFIG = {
   timeframe:    '1h',               // candle interval
   fastPeriod:   9,                  // fast EMA period
   slowPeriod:   50,                 // slow EMA period
-  leverage:     3,                  // position leverage
+  leverage:     8,                  // position leverage
   riskPct:      0.02,              // risk 2% of balance per trade
   useRsi:       true,
   rsiPeriod:    14,
