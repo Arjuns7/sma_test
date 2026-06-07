@@ -27,8 +27,8 @@ const CONFIG = {
   trailMult:    3.0,               // trailing stop ATR multiplier
   longOnly:     false,             // set true for long-only mode
   pollMs:       15000,             // poll every 15 seconds for fast stop-loss
-  signalPollMs: 60000,             // check for signals every 60 seconds
-  stopPollMs:   10000,             // monitor stops every 10 seconds when in position
+  signalPollMs: 300000,            // check for signals every 5 minutes
+  stopPollMs:   60000,             // monitor stops every 60 seconds when in position
   testnet:      true,              // true = testnet, false = mainnet
   maxDailyLoss: -500,             // kill switch: max daily loss USD
 };
