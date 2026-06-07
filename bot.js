@@ -26,7 +26,9 @@ const CONFIG = {
   useTrailing:  true,
   trailMult:    3.0,               // trailing stop ATR multiplier
   longOnly:     false,             // set true for long-only mode
-  pollMs:       300000,            // poll interval (5 min for 1h candles)
+  pollMs:       15000,             // poll every 15 seconds for fast stop-loss
+  signalPollMs: 60000,             // check for signals every 60 seconds
+  stopPollMs:   10000,             // monitor stops every 10 seconds when in position
   testnet:      true,              // true = testnet, false = mainnet
   maxDailyLoss: -500,             // kill switch: max daily loss USD
 };
@@ -185,16 +187,116 @@ async function runBot() {
 
   console.log('');
   console.log('🔄 Entering main loop...');
+  console.log(`   Signal check: every ${CONFIG.signalPollMs / 1000}s`);
+  console.log(`   Stop monitor: every ${CONFIG.stopPollMs / 1000}s (when in position)`);
   console.log('');
 
-  // Main loop
+  let lastSignalCheck = 0;
+
+  // Main loop — fast polling, two modes
   while (true) {
     try {
-      await tick();
+      const now = Date.now();
+
+      if (position) {
+        // IN POSITION → monitor price for stops every 10s
+        await monitorStops();
+      }
+
+      // Check for entry/exit signals on a slower cadence
+      if (now - lastSignalCheck >= CONFIG.signalPollMs) {
+        await tick();
+        lastSignalCheck = now;
+      }
     } catch (e) {
       console.error(`❌ Tick error: ${e.message}`);
     }
-    await sleep(CONFIG.pollMs);
+    await sleep(position ? CONFIG.stopPollMs : CONFIG.signalPollMs);
+  }
+}
+
+// ─── FAST STOP MONITOR (runs every 10s when in position) ─────
+async function monitorStops() {
+  if (!position) return;
+
+  try {
+    const ticker = await exchange.fetchTicker(CONFIG.symbol);
+    const price = ticker.last;
+    const ts = new Date().toLocaleTimeString();
+
+    // Update peak/trough for trailing stop
+    if (position.side === 'LONG' && price > position.peakPrice) {
+      position.peakPrice = price;
+    }
+    if (position.side === 'SHORT' && price < position.troughPrice) {
+      position.troughPrice = price;
+    }
+
+    // Get latest ATR (cached, refresh every 5 min)
+    if (!position.cachedATR || Date.now() - (position.atrTime || 0) > 300000) {
+      const candles = await exchange.fetchOHLCV(CONFIG.symbol, CONFIG.timeframe, undefined, CONFIG.atrPeriod + 5);
+      const atrVals = calcATR(candles, CONFIG.atrPeriod);
+      position.cachedATR = atrVals[atrVals.length - 1] || price * 0.02;
+      position.atrTime = Date.now();
+    }
+    const atrNow = position.cachedATR;
+
+    // ATR Stop-Loss check
+    if (CONFIG.useAtrStop) {
+      const stopDist = CONFIG.atrMult * atrNow;
+      if (position.side === 'LONG' && price < position.entryPrice - stopDist) {
+        console.log(`[${ts}] 🔴 ATR STOP-LOSS HIT! Price: $${price} < Stop: $${(position.entryPrice - stopDist).toFixed(0)}`);
+        await closePosition('atr-stop');
+        return;
+      }
+      if (position.side === 'SHORT' && price > position.entryPrice + stopDist) {
+        console.log(`[${ts}] 🔴 ATR STOP-LOSS HIT! Price: $${price} > Stop: $${(position.entryPrice + stopDist).toFixed(0)}`);
+        await closePosition('atr-stop');
+        return;
+      }
+    }
+
+    // Trailing Stop check
+    if (CONFIG.useTrailing) {
+      const tsDist = CONFIG.trailMult * atrNow;
+      if (position.side === 'LONG') {
+        const trailStop = position.peakPrice - tsDist;
+        if (price < trailStop) {
+          console.log(`[${ts}] 🟡 TRAILING STOP HIT! Price: $${price} < Trail: $${trailStop.toFixed(0)} (peak: $${position.peakPrice})`);
+          await closePosition('trail-stop');
+          return;
+        }
+      }
+      if (position.side === 'SHORT') {
+        const trailStop = position.troughPrice + tsDist;
+        if (price > trailStop) {
+          console.log(`[${ts}] 🟡 TRAILING STOP HIT! Price: $${price} > Trail: $${trailStop.toFixed(0)} (trough: $${position.troughPrice})`);
+          await closePosition('trail-stop');
+          return;
+        }
+      }
+    }
+
+    // Quiet log (only every 60s to avoid spam)
+    if (!position.lastMonitorLog || Date.now() - position.lastMonitorLog > 60000) {
+      const pnl = position.side === 'LONG'
+        ? (price - position.entryPrice) * position.size
+        : (position.entryPrice - price) * position.size;
+      const stopDist = CONFIG.atrMult * atrNow;
+      const trailDist = CONFIG.trailMult * atrNow;
+      const atrStop = position.side === 'LONG' ? position.entryPrice - stopDist : position.entryPrice + stopDist;
+      const trailStop = position.side === 'LONG' ? position.peakPrice - trailDist : position.troughPrice + trailDist;
+
+      console.log(
+        `[${ts}] 👁️ $${price.toFixed(0)} | PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` +
+        ` | SL: $${atrStop.toFixed(0)} | Trail: $${trailStop.toFixed(0)}` +
+        ` | Peak: $${position.peakPrice.toFixed(0)}`
+      );
+      position.lastMonitorLog = Date.now();
+    }
+
+  } catch (e) {
+    // Silently ignore ticker errors during fast polling
   }
 }
 
@@ -347,7 +449,34 @@ async function openPosition(side, price) {
     };
     tradeCount++;
     console.log(`✅ Order filled: ${order.id}`);
-    console.log(`   Trade #${tradeCount}\n`);
+    console.log(`   Trade #${tradeCount}`);
+
+    // Place on-chain stop-loss order on Hyperliquid
+    try {
+      const candles = await exchange.fetchOHLCV(CONFIG.symbol, CONFIG.timeframe, undefined, CONFIG.atrPeriod + 5);
+      const atrVals = calcATR(candles, CONFIG.atrPeriod);
+      const currentATR = atrVals[atrVals.length - 1] || price * 0.02;
+      const stopDist = CONFIG.atrMult * currentATR;
+      const stopPrice = side === 'LONG'
+        ? Math.round(price - stopDist)
+        : Math.round(price + stopDist);
+      const stopSide = side === 'LONG' ? 'sell' : 'buy';
+
+      const stopOrder = await exchange.createOrder(
+        CONFIG.symbol,
+        'stop',
+        stopSide,
+        size,
+        stopPrice,
+        { stopPrice: stopPrice, reduceOnly: true }
+      );
+      position.stopOrderId = stopOrder.id;
+      console.log(`🛡️  On-chain stop-loss placed at $${stopPrice} (${stopOrder.id})`);
+    } catch (stopErr) {
+      console.log(`⚠️  Could not place on-chain stop: ${stopErr.message}`);
+      console.log(`   Bot will manage stop-loss internally (15s polling)`);
+    }
+    console.log('');
   } catch (e) {
     console.error(`❌ Failed to open ${side}: ${e.message}`);
   }
