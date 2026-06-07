@@ -321,12 +321,12 @@ async function openPosition(side, price) {
   try {
     const balance = await exchange.fetchBalance();
     const free = parseFloat(balance.free?.USDC || balance.total?.USDC || 0);
-    const riskAmount = free * CONFIG.riskPct;
-    const size = (riskAmount * CONFIG.leverage) / price;
+    const positionValue = free * CONFIG.leverage;  // full capital × leverage (matches backtester)
+    const size = positionValue / price;
 
     console.log(`\n🟢 OPENING ${side}`);
     console.log(`   Size:    ${size.toFixed(6)} BTC @ $${price.toFixed(2)}`);
-    console.log(`   Balance: $${free.toFixed(2)} | Risk: $${riskAmount.toFixed(2)}`);
+    console.log(`   Balance: $${free.toFixed(2)} | Margin: $${free.toFixed(2)} | Notional: $${positionValue.toFixed(2)}`);
 
     const orderSide = side === 'LONG' ? 'buy' : 'sell';
 
