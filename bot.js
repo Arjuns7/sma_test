@@ -26,6 +26,10 @@ const CONFIG = {
   useTrailing:  true,
   trailMult:    3.0,               // trailing stop ATR multiplier
   longOnly:     false,             // set true for long-only mode
+  useTrend:     true,              // trend filter (200 EMA)
+  trendPeriod:  200,               // trend MA period
+  useVol:       true,              // volume filter
+  volPeriod:    20,                // volume SMA period
   pollMs:       15000,             // poll every 15 seconds for fast stop-loss
   signalPollMs: 300000,            // check for signals every 5 minutes
   stopPollMs:   60000,             // monitor stops every 60 seconds when in position
@@ -105,7 +109,19 @@ function calcATR(candles, period = 14) {
   return out;
 }
 
-// ─── BOT STATE ───────────────────────────────────────────────
+function calcSMA(values, period) {
+  const out = new Array(values.length).fill(null);
+  if (values.length < period) return out;
+  let sum = values.slice(0, period).reduce((a, b) => a + b, 0);
+  out[period - 1] = sum / period;
+  for (let i = period; i < values.length; i++) {
+    sum += values[i] - values[i - period];
+    out[i] = sum / period;
+  }
+  return out;
+}
+
+// ─── BOT STATE ───────────────────────────────────────────────────────
 let position = null;
 let dailyPnL = 0;
 let lastResetDay = new Date().toDateString();
@@ -126,6 +142,8 @@ async function runBot() {
   console.log(`   Leverage:  ${CONFIG.leverage}x`);
   console.log(`   Mode:      ${CONFIG.longOnly ? 'Long Only' : 'Long + Short'}`);
   console.log(`   Risk:      ${CONFIG.riskPct * 100}% per trade`);
+  console.log(`   Trend:     ${CONFIG.useTrend ? `EMA ${CONFIG.trendPeriod}` : 'OFF'}`);
+  console.log(`   Volume:    ${CONFIG.useVol ? `SMA ${CONFIG.volPeriod}` : 'OFF'}`);
   console.log('');
 
   // Load markets
@@ -317,7 +335,7 @@ async function tick() {
   }
 
   // Fetch candles (OHLCV format: [timestamp, open, high, low, close, volume])
-  const needed = Math.max(CONFIG.slowPeriod, CONFIG.rsiPeriod, CONFIG.atrPeriod) + 5;
+  const needed = Math.max(CONFIG.slowPeriod, CONFIG.rsiPeriod, CONFIG.atrPeriod, CONFIG.useTrend ? CONFIG.trendPeriod : 0, CONFIG.useVol ? CONFIG.volPeriod : 0) + 5;
   const candles = await exchange.fetchOHLCV(
     CONFIG.symbol, CONFIG.timeframe, undefined, needed
   );
@@ -333,6 +351,9 @@ async function tick() {
   const rsiVals = CONFIG.useRsi ? calcRSI(closes, CONFIG.rsiPeriod) : null;
   const atrVals = (CONFIG.useAtrStop || CONFIG.useTrailing)
     ? calcATR(candles, CONFIG.atrPeriod) : null;
+  const trendMA = CONFIG.useTrend ? calcEMA(closes, CONFIG.trendPeriod) : null;
+  const volumes = candles.map(c => c[5]);
+  const volSMA = CONFIG.useVol ? calcSMA(volumes, CONFIG.volPeriod) : null;
 
   const i = closes.length - 1;
   const prevI = i - 1;
@@ -344,6 +365,9 @@ async function tick() {
   const price = closes[i];
   const rsiNow = rsiVals ? rsiVals[i] : null;
   const atrNow = atrVals ? atrVals[i] : null;
+  const trendNow = trendMA ? trendMA[i] : null;
+  const volNow = candles[i] ? candles[i][5] : null;
+  const volSMANow = volSMA ? volSMA[i] : null;
   const golden = pf <= ps && cf > cs;  // bullish crossover
   const death  = pf >= ps && cf < cs;  // bearish crossover
 
@@ -353,6 +377,8 @@ async function tick() {
     `[${ts}] $${price.toFixed(2)} | Fast: ${cf.toFixed(2)} | Slow: ${cs.toFixed(2)}` +
     `${rsiNow ? ` | RSI: ${rsiNow.toFixed(1)}` : ''}` +
     `${atrNow ? ` | ATR: ${atrNow.toFixed(2)}` : ''}` +
+    `${trendNow ? ` | Trend: ${price > trendNow ? '↑' : '↓'}` : ''}` +
+    `${volSMANow ? ` | Vol: ${volNow > volSMANow ? '↑' : '↓'}` : ''}` +
     posInfo +
     (golden ? ' 🟢 GOLDEN CROSS' : '') +
     (death ? ' 🔴 DEATH CROSS' : '')
@@ -400,7 +426,9 @@ async function tick() {
       await closePosition('crossover');
     }
     const rsiBlocked = CONFIG.useRsi && rsiNow !== null && rsiNow > CONFIG.rsiOB;
-    if (!position && !rsiBlocked) {
+    const trendBlocked = CONFIG.useTrend && trendNow !== null && price <= trendNow;
+    const volBlocked = CONFIG.useVol && volSMANow !== null && volNow <= volSMANow;
+    if (!position && !rsiBlocked && !trendBlocked && !volBlocked) {
       await openPosition('LONG', price);
     }
   }
@@ -411,7 +439,9 @@ async function tick() {
     }
     if (!CONFIG.longOnly) {
       const rsiBlocked = CONFIG.useRsi && rsiNow !== null && rsiNow < CONFIG.rsiOS;
-      if (!position && !rsiBlocked) {
+      const trendBlocked = CONFIG.useTrend && trendNow !== null && price >= trendNow;
+      const volBlocked = CONFIG.useVol && volSMANow !== null && volNow <= volSMANow;
+      if (!position && !rsiBlocked && !trendBlocked && !volBlocked) {
         await openPosition('SHORT', price);
       }
     }
